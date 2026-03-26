@@ -574,9 +574,19 @@ class VocabMinerDialog(QDialog):
                 tmp = os.path.join(tempfile.gettempdir(), "vocabminer_preview.mp3")
                 tts = gTTS(text=text, lang=lang, tld=tld, slow=False)
                 tts.save(tmp)
-                # Play using macOS afplay (built-in, no install needed)
                 import subprocess
-                subprocess.Popen(["afplay", tmp])
+                if sys.platform == "darwin":
+                    subprocess.Popen(["afplay", tmp])
+                elif sys.platform == "win32":
+                    os.startfile(tmp)
+                else:
+                    # Linux: try common players
+                    for player in ("aplay", "mpg123", "xdg-open"):
+                        try:
+                            subprocess.Popen([player, tmp])
+                            break
+                        except FileNotFoundError:
+                            continue
             except Exception as e:
                 pass
         threading.Thread(target=_play, daemon=True).start()
