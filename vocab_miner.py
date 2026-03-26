@@ -27,6 +27,7 @@ def get_config():
         "provider":     cfg.get("provider", "claude"),
         "claude_key":   cfg.get("claude_key", ""),
         "openai_key":   cfg.get("openai_key", ""),
+        "gemini_key":   cfg.get("gemini_key", ""),
         "deck_name":    cfg.get("deck_name", "Default"),
         "note_type":    cfg.get("note_type", "Basic"),
         "field_front":  cfg.get("field_front", "Front"),
@@ -66,6 +67,8 @@ class AIWorker(QThread):
     def _call_ai(self, prompt, system=""):
         if self.provider == "claude":
             return self._call_claude(prompt, system)
+        if self.provider == "gemini":
+            return self._call_gemini(prompt, system)
         return self._call_openai(prompt, system)
 
     def _call_claude(self, prompt, system=""):
@@ -91,6 +94,26 @@ class AIWorker(QThread):
             if "error" in data:
                 raise Exception(data["error"].get("message", str(data["error"])))
             return "".join(c.get("text", "") for c in data.get("content", [])).strip()
+
+    def _call_gemini(self, prompt, system=""):
+        body = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"maxOutputTokens": 1200},
+        }
+        if system:
+            body["system_instruction"] = {"parts": [{"text": system}]}
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.api_key}"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+            if "error" in data:
+                raise Exception(data["error"].get("message", str(data["error"])))
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
     def _call_openai(self, prompt, system=""):
         messages = []
@@ -277,6 +300,7 @@ class VocabMinerDialog(QDialog):
         self.cfg_provider = QComboBox()
         self.cfg_provider.addItem("Claude (Anthropic)", "claude")
         self.cfg_provider.addItem("ChatGPT (OpenAI)", "openai")
+        self.cfg_provider.addItem("Gemini (Google)", "gemini")
         provider_form.addRow("Provider:", self.cfg_provider)
         layout.addWidget(provider_group)
 
@@ -301,6 +325,17 @@ class VocabMinerDialog(QDialog):
         lbl_openai.setOpenExternalLinks(True)
         openai_form.addRow("", lbl_openai)
         layout.addWidget(openai_group)
+
+        gemini_group = QGroupBox("Gemini API Key (Google)")
+        gemini_form = QFormLayout(gemini_group)
+        self.cfg_gemini_key = QLineEdit()
+        self.cfg_gemini_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.cfg_gemini_key.setPlaceholderText("AIza...")
+        gemini_form.addRow("API Key:", self.cfg_gemini_key)
+        lbl_gemini = QLabel('<a href="https://aistudio.google.com/app/apikey">aistudio.google.com</a>')
+        lbl_gemini.setOpenExternalLinks(True)
+        gemini_form.addRow("", lbl_gemini)
+        layout.addWidget(gemini_group)
 
         anki_group = QGroupBox("Anki")
         anki_form = QFormLayout(anki_group)
@@ -346,6 +381,7 @@ class VocabMinerDialog(QDialog):
             self.cfg_provider.setCurrentIndex(idx)
         self.cfg_claude_key.setText(cfg["claude_key"])
         self.cfg_openai_key.setText(cfg["openai_key"])
+        self.cfg_gemini_key.setText(cfg["gemini_key"])
         self.cfg_deck.setText(cfg["deck_name"])
         self.cfg_note_type.setText(cfg["note_type"])
         self.cfg_field_front.setText(cfg["field_front"])
@@ -360,6 +396,7 @@ class VocabMinerDialog(QDialog):
             "provider":    self.cfg_provider.currentData(),
             "claude_key":  self.cfg_claude_key.text().strip(),
             "openai_key":  self.cfg_openai_key.text().strip(),
+            "gemini_key":  self.cfg_gemini_key.text().strip(),
             "deck_name":   self.cfg_deck.text().strip(),
             "note_type":   self.cfg_note_type.text().strip(),
             "field_front": self.cfg_field_front.text().strip(),
@@ -373,6 +410,8 @@ class VocabMinerDialog(QDialog):
         provider = self.cfg_provider.currentData()
         if provider == "claude":
             key = self.cfg_claude_key.text().strip() or get_config()["claude_key"]
+        elif provider == "gemini":
+            key = self.cfg_gemini_key.text().strip() or get_config()["gemini_key"]
         else:
             key = self.cfg_openai_key.text().strip() or get_config()["openai_key"]
         return provider, key
@@ -405,7 +444,7 @@ class VocabMinerDialog(QDialog):
 
         self._set_busy(True)
         self.lbl_word.setText(word)
-        provider_label = "Claude" if provider == "claude" else "ChatGPT"
+        provider_label = {"claude": "Claude", "openai": "ChatGPT", "gemini": "Gemini"}.get(provider, provider)
         self.lbl_status.setText(f"Generating via {provider_label}...")
         self.btn_reset.setVisible(False)
 
@@ -430,7 +469,7 @@ class VocabMinerDialog(QDialog):
         self._set_busy(False)
         self.lbl_status.setText("Error")
         provider, key = self._get_active_key()
-        provider_label = "Claude" if provider == "claude" else "ChatGPT"
+        provider_label = {"claude": "Claude", "openai": "ChatGPT", "gemini": "Gemini"}.get(provider, provider)
         key_preview = (key[:8] + "...") if key else "(no key set)"
         QMessageBox.critical(self, "Error",
             f"Provider: {provider_label}\nKey: {key_preview}\n\nError: {msg}\n\n"

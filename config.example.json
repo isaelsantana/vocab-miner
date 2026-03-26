@@ -2,6 +2,7 @@
     "provider": "claude",
     "claude_key": "",
     "openai_key": "",
+    "gemini_key": "",
     "deck_name": "Default",
     "note_type": "Basic",
     "field_front": "Front",
