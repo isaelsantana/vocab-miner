@@ -102,7 +102,7 @@ class AIWorker(QThread):
         }
         if system:
             body["system_instruction"] = {"parts": [{"text": system}]}
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.api_key}"
         req = urllib.request.Request(
             url,
             data=json.dumps(body).encode(),
