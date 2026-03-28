@@ -6,5 +6,7 @@
     "deck_name": "Default",
     "note_type": "Basic",
     "field_front": "Front",
-    "field_back": "Back"
+    "field_back": "Back",
+    "tts_lang": "en",
+    "tts_tld": "com"
 }
