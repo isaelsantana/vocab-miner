@@ -74,7 +74,7 @@ class AIWorker(QThread):
     def _call_claude(self, prompt, system=""):
         body = {
             "model": "claude-sonnet-4-20250514",
-            "max_tokens": 1200,
+            "max_tokens": 600,
             "messages": [{"role": "user", "content": prompt}]
         }
         if system:
@@ -98,7 +98,7 @@ class AIWorker(QThread):
     def _call_gemini(self, prompt, system=""):
         body = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"maxOutputTokens": 1200},
+            "generationConfig": {"maxOutputTokens": 600},
         }
         if system:
             body["system_instruction"] = {"parts": [{"text": system}]}
@@ -122,7 +122,7 @@ class AIWorker(QThread):
         messages.append({"role": "user", "content": prompt})
         body = {
             "model": "gpt-4o-mini",
-            "max_tokens": 1200,
+            "max_tokens": 600,
             "messages": messages
         }
         req = urllib.request.Request(
@@ -149,7 +149,21 @@ class AIWorker(QThread):
 - "synonyms": a comma-separated string of 3-5 synonyms
 - "breakdown": a JSON array of objects with "word" and "meaning" keys for every significant word in the sentence EXCEPT "{self.word}" itself. Skip very common words like: the, a, is, in, and, to, of, it, for, on, with, at, by, from, that, this, was, are, be, as, an"""
         raw = self._call_ai(prompt, system)
-        return json.loads(re.sub(r"```json|```", "", raw).strip())
+        cleaned = re.sub(r"```json|```", "", raw).strip()
+        m = re.search(r'\{.*\}', cleaned, re.DOTALL)
+        if m:
+            cleaned = m.group(0)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            correction = (f'Your last response was not valid JSON. Raw:\n{raw}\n\n'
+                          f'Return ONLY the JSON object for "{self.word}", nothing else.')
+            raw2 = self._call_ai(correction, system)
+            cleaned2 = re.sub(r"```json|```", "", raw2).strip()
+            m2 = re.search(r'\{.*\}', cleaned2, re.DOTALL)
+            if m2:
+                cleaned2 = m2.group(0)
+            return json.loads(cleaned2)
 
     def _regenerate_sentence(self):
         system = "You are a vocabulary assistant. Always respond ONLY in valid JSON, no markdown, no extra text."
@@ -158,7 +172,21 @@ Return a JSON object with:
 - "sentence": the new sentence
 - "breakdown": a JSON array of objects with "word" and "meaning" keys for every significant word EXCEPT "{self.word}". Skip very common words like: the, a, is, in, and, to, of, it, for, on, with, at, by, from, that, this, was, are, be, as, an"""
         raw = self._call_ai(prompt, system)
-        return json.loads(re.sub(r"```json|```", "", raw).strip())
+        cleaned = re.sub(r"```json|```", "", raw).strip()
+        m = re.search(r'\{.*\}', cleaned, re.DOTALL)
+        if m:
+            cleaned = m.group(0)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            correction = (f'Your last response was not valid JSON. Raw:\n{raw}\n\n'
+                          f'Return ONLY the JSON object for "{self.word}", nothing else.')
+            raw2 = self._call_ai(correction, system)
+            cleaned2 = re.sub(r"```json|```", "", raw2).strip()
+            m2 = re.search(r'\{.*\}', cleaned2, re.DOTALL)
+            if m2:
+                cleaned2 = m2.group(0)
+            return json.loads(cleaned2)
 
 
 # ─── Main Dialog ──────────────────────────────────────────────────────────────
@@ -170,6 +198,9 @@ class VocabMinerDialog(QDialog):
         self.setWindowTitle("Vocab Miner")
         self.setMinimumWidth(560)
         self.worker = None
+        from collections import OrderedDict
+        self._cache = OrderedDict()
+        self._cache_max = 50
         self._build_ui()
         self._load_settings()
         self._check_anki_connection()
@@ -416,6 +447,21 @@ class VocabMinerDialog(QDialog):
             key = self.cfg_openai_key.text().strip() or get_config()["openai_key"]
         return provider, key
 
+    def _cache_get(self, word, provider):
+        key = (word.lower().strip(), provider)
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]
+        return None
+
+    def _cache_put(self, word, provider, data):
+        key = (word.lower().strip(), provider)
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        self._cache[key] = data
+        if len(self._cache) > self._cache_max:
+            self._cache.popitem(last=False)
+
     def _check_anki_connection(self):
         try:
             decks = mw.col.decks.all_names()
@@ -442,6 +488,13 @@ class VocabMinerDialog(QDialog):
             QMessageBox.warning(self, "API Key missing", "Go to Settings and add your API Key.")
             return
 
+        cached = self._cache_get(word, provider)
+        if cached:
+            self.lbl_word.setText(word)
+            self.lbl_status.setText("(cached)")
+            self._on_generated(cached)
+            return
+
         self._set_busy(True)
         self.lbl_word.setText(word)
         provider_label = {"claude": "Claude", "openai": "ChatGPT", "gemini": "Gemini"}.get(provider, provider)
@@ -455,6 +508,8 @@ class VocabMinerDialog(QDialog):
 
     def _on_generated(self, data: dict):
         word = self.word_input.text().strip()
+        provider, _ = self._get_active_key()
+        self._cache_put(word, provider, data)
         self.txt_ipa.setText(data.get("ipa", ""))
         self.txt_definition.setPlainText(data.get("definition", ""))
         self.txt_synonyms.setPlainText(data.get("synonyms", ""))
